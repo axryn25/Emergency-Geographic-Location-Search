@@ -342,4 +342,157 @@ public class RTree {
         }
     }
 
-   
+    // =========================================================================
+    // 3. NEAREST NEIGHBOR (k-NN) SEARCH USING BASIC ARRAY SORTING
+    // =========================================================================
+
+    public EmergencyFacility[] searchNearest(double x, double y, int k) {
+        EmergencyFacility[] allFacilities = new EmergencyFacility[1000];
+        int[] countRef = new int[1];
+        collectAllFacilities(root, allFacilities, countRef);
+
+        int total = countRef[0];
+        if (total == 0) return new EmergencyFacility[0];
+
+        // Bubble sort facilities by Euclidean distance
+        for (int i = 0; i < total - 1; i++) {
+            for (int j = 0; j < total - i - 1; j++) {
+                double d1 = allFacilities[j].distanceTo(x, y);
+                double d2 = allFacilities[j + 1].distanceTo(x, y);
+                if (d1 > d2) {
+                    EmergencyFacility temp = allFacilities[j];
+                    allFacilities[j] = allFacilities[j + 1];
+                    allFacilities[j + 1] = temp;
+                }
+            }
+        }
+
+        int resultSetSize = Math.min(k, total);
+        EmergencyFacility[] result = new EmergencyFacility[resultSetSize];
+        for (int i = 0; i < resultSetSize; i++) {
+            result[i] = allFacilities[i];
+        }
+        return result;
+    }
+
+    private void collectAllFacilities(RTreeNode current, EmergencyFacility[] buffer, int[] countRef) {
+        if (current == null) return;
+
+        if (current.isLeaf()) {
+            for (int i = 0; i < current.getCount(); i++) {
+                buffer[countRef[0]] = current.getFacilities()[i];
+                countRef[0]++;
+            }
+        } else {
+            for (int i = 0; i < current.getCount(); i++) {
+                collectAllFacilities(current.getChildren()[i], buffer, countRef);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4. DELETION LOGIC
+    // =========================================================================
+
+    public boolean delete(String facilityId) {
+        EmergencyFacility target = findFacilityById(root, facilityId);
+        if (target == null) return false;
+
+        RTreeNode leaf = findLeafWithFacility(root, target);
+        if (leaf == null) return false;
+
+        // Find index and remove
+        for (int i = 0; i < leaf.getCount(); i++) {
+            if (leaf.getFacilities()[i] == target) {
+                leaf.removeFacilityAt(i);
+                break;
+            }
+        }
+
+        condenseTree(leaf);
+
+        // Collapse root if reduced to a single child
+        if (!root.isLeaf() && root.getCount() == 1) {
+            root = root.getChildren()[0];
+        } else if (!root.isLeaf() && root.getCount() == 0) {
+            root = new RTreeNode(true, maxEntries);
+        }
+        return true;
+    }
+
+    private EmergencyFacility findFacilityById(RTreeNode current, String id) {
+        if (current.isLeaf()) {
+            for (int i = 0; i < current.getCount(); i++) {
+                EmergencyFacility f = current.getFacilities()[i];
+                if (f.getId().equalsIgnoreCase(id)) return f;
+            }
+        } else {
+            for (int i = 0; i < current.getCount(); i++) {
+                EmergencyFacility f = findFacilityById(current.getChildren()[i], id);
+                if (f != null) return f;
+            }
+        }
+        return null;
+    }
+
+    private RTreeNode findLeafWithFacility(RTreeNode current, EmergencyFacility target) {
+        if (current.isLeaf()) {
+            for (int i = 0; i < current.getCount(); i++) {
+                if (current.getFacilities()[i] == target) return current;
+            }
+        } else {
+            for (int i = 0; i < current.getCount(); i++) {
+                RTreeNode child = current.getChildren()[i];
+                if (child.getMBR() != null && child.getMBR().containsPoint(target.getX(), target.getY())) {
+                    RTreeNode res = findLeafWithFacility(child, target);
+                    if (res != null) return res;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void condenseTree(RTreeNode node) {
+        RTreeNode current = node;
+        EmergencyFacility[] orphanedFacilities = new EmergencyFacility[100];
+        int orphanCount = 0;
+
+        while (current != root) {
+            RTreeNode parent = findParent(root, current);
+            if (current.getCount() < minEntries) {
+                // Remove underfull child node from parent
+                for (int i = 0; i < parent.getCount(); i++) {
+                    if (parent.getChildren()[i] == current) {
+                        parent.removeChildAt(i);
+                        break;
+                    }
+                }
+                // Collect entries to reinsert
+                orphanCount = collectOrphans(current, orphanedFacilities, orphanCount);
+            } else {
+                current.recalculateMBR();
+            }
+            current = parent;
+        }
+        root.recalculateMBR();
+
+        // Reinsert orphaned facilities back into the tree
+        for (int i = 0; i < orphanCount; i++) {
+            insert(orphanedFacilities[i]);
+        }
+    }
+
+    private int collectOrphans(RTreeNode node, EmergencyFacility[] orphans, int currentOrphanCount) {
+        if (node.isLeaf()) {
+            for (int i = 0; i < node.getCount(); i++) {
+                orphans[currentOrphanCount] = node.getFacilities()[i];
+                currentOrphanCount++;
+            }
+        } else {
+            for (int i = 0; i < node.getCount(); i++) {
+                currentOrphanCount = collectOrphans(node.getChildren()[i], orphans, currentOrphanCount);
+            }
+        }
+        return currentOrphanCount;
+    }
+}
